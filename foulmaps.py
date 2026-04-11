@@ -34,7 +34,7 @@ DATASET_ID = "capstone_project"
 def draw_court_accurate(ax, color='white', lw=1.5, paint_fill_color=None):
     """Draws an accurate NBA half-court."""
     if paint_fill_color:
-        ax.add_patch(patches.Rectangle((-80, -52.5), 160, 190, facecolor=paint_fill_color, alpha=0.1, zorder=1))
+        ax.add_patch(patches.Rectangle((-80, -52.5), 160, 190, facecolor=paint_fill_color, alpha=0.25, zorder=1))
     ax.add_patch(patches.Rectangle((-250, -52.5), 500, 470, linewidth=lw, color=color, fill=False, zorder=10))
     ax.plot([-250, 250], [417.5, 417.5], color=color, lw=lw, zorder=10)
     ax.add_patch(patches.Rectangle((-80, -52.5), 160, 190, linewidth=lw, color=color, fill=False, zorder=10))
