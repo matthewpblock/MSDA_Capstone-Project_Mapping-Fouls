@@ -12,6 +12,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from scipy.ndimage import gaussian_filter
 import requests
 from PIL import Image
+import os
 from io import BytesIO
 from google.cloud import bigquery
 import warnings
@@ -26,8 +27,8 @@ FOUL_HIGH = '#CF142B'
 
 foul_cmap = LinearSegmentedColormap.from_list("foul_pressure", [BRAND_GREY, FOUL_HIGH])
 
-PROJECT_ID = "mapping-nba-fouls"
-DATASET_ID = "capstone_project"
+PROJECT_ID = os.environ.get("BQ_PROJECT_ID", "mapping-nba-fouls")
+DATASET_ID = os.environ.get("BQ_DATASET_ID", "capstone_project")
 
 # --- HELPER FUNCTIONS ---
 
@@ -110,7 +111,8 @@ def ind_foul_map(player_id: str, year: int):
         meta_df = client.query(query_meta).to_dataframe().iloc[0]
         player_name = meta_df['player_name']
         team_abbr = meta_df['team_abbr']
-    except: 
+    except Exception as e: 
+        print(f"Warning: Could not fetch metadata for player {player_id}. Error: {e}")
         player_name = "Unknown Player"
         team_abbr = "NBA"
 
@@ -120,7 +122,8 @@ def ind_foul_map(player_id: str, year: int):
         team_colors = client.query(color_query).to_dataframe().iloc[0]
         primary = team_colors['primary_color']
         secondary = team_colors['secondary_color']
-    except:
+    except Exception as e:
+        print(f"Warning: Could not fetch colors for team {team_abbr}. Error: {e}")
         primary = '#007AC1'; secondary = '#EF3B24' # Fallback
 
     # 3. Fetch Shot & Foul Data
@@ -216,7 +219,7 @@ def ind_foul_map(player_id: str, year: int):
         ax_photo.axis('off')
         ax_photo.imshow(img)
     except Exception as e:
-        pass
+        print(f"Warning: Could not load player photo. Error: {e}")
 
     # Header
     fig.text(0.05, 0.94, "CRITICAL SECTION // FOUL MAPPING", color=BRAND_WHITE, fontsize=28, fontweight='bold')
