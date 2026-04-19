@@ -1,6 +1,9 @@
 """
 NBA Foul Geography Visualizer
-A module for generating the "Critical Section" Foul Map.
+
+A module for generating the "Critical Section" Foul Map, an analytical tool 
+designed to geospatially evaluate where players successfully draw fouls 
+versus where they commit them.
 """
 
 import pandas as pd
@@ -62,7 +65,18 @@ def draw_court_accurate(ax, color='white', lw=1.5, paint_fill_color=None):
     return ax
 
 def get_visual_data(df_s, df_f, grid_w=20, min_cnt=5):
-    """Calculates hexbin data and topographic contours."""
+    """
+    Calculates hexbin data and topographic contours for the visualization.
+    
+    Args:
+        df_s (pd.DataFrame): Shot data containing 'loc_x', 'loc_y', and 'foul_val'.
+        df_f (pd.DataFrame): Foul data containing 'loc_x', 'loc_y'.
+        grid_w (int): The gridsize for the hexbin plot. Defaults to 20.
+        min_cnt (int): Minimum occurrences required to display a hex. Defaults to 5.
+        
+    Returns:
+        tuple: Vertices, counts, rates, smoothed topography array, x edges, and y edges.
+    """
     if df_s.empty:
         return [], [], [], None, None, None
         
@@ -92,23 +106,33 @@ def ind_foul_map(player_id: str, year: int):
     Args:
         player_id (str): The NBA Player ID string (e.g., '1628983').
         year (int): The season end year (e.g., 2024 for the 2023-24 season).
+        
+    Returns:
+        None. Renders a matplotlib figure to the active display.
     """
     client = bigquery.Client(project=PROJECT_ID)
     
-    # Format seasons for query (e.g. 2024 -> ('22024', '42024'))
-    seasons_tuple = f"('2{year}', '4{year}')"
     season_title = f"{year-1}-{str(year)[-2:]}"
+    seasons_list = [f"2{year}", f"4{year}"]
 
-    # 1. Fetch Player Name & Team
+    # Configure query parameters to prevent SQL injection and improve query caching
+    job_config_player = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("player_id", "STRING", player_id),
+            bigquery.ArrayQueryParameter("season_ids", "STRING", seasons_list),
+        ]
+    )
+
+    # Fetch player metadata to customize the visualization headers
     query_meta = f"""
         SELECT p.player_name, s.team_abbr 
         FROM `{PROJECT_ID}.{DATASET_ID}.fct_shots` s
         JOIN `{PROJECT_ID}.{DATASET_ID}.dim_players` p ON s.player_id = p.player_id
-        WHERE s.player_id = '{player_id}' AND s.season_id IN {seasons_tuple} 
+        WHERE s.player_id = @player_id AND s.season_id IN UNNEST(@season_ids) 
         LIMIT 1
     """
     try: 
-        meta_df = client.query(query_meta).to_dataframe().iloc[0]
+        meta_df = client.query(query_meta, job_config=job_config_player).to_dataframe().iloc[0]
         player_name = meta_df['player_name']
         team_abbr = meta_df['team_abbr']
     except Exception as e: 
@@ -116,38 +140,45 @@ def ind_foul_map(player_id: str, year: int):
         player_name = "Unknown Player"
         team_abbr = "NBA"
 
-    # 2. Fetch Colors
-    color_query = f"SELECT primary_color, secondary_color FROM `{PROJECT_ID}.{DATASET_ID}.dim_teams` WHERE team_abbr = '{team_abbr}'"
+    # Fetch team colors to dynamically theme the court and topography maps
+    job_config_team = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr)]
+    )
+    color_query = f"""
+        SELECT primary_color, secondary_color 
+        FROM `{PROJECT_ID}.{DATASET_ID}.dim_teams` 
+        WHERE team_abbr = @team_abbr
+    """
     try:
-        team_colors = client.query(color_query).to_dataframe().iloc[0]
+        team_colors = client.query(color_query, job_config=job_config_team).to_dataframe().iloc[0]
         primary = team_colors['primary_color']
         secondary = team_colors['secondary_color']
     except Exception as e:
         print(f"Warning: Could not fetch colors for team {team_abbr}. Error: {e}")
         primary = '#007AC1'; secondary = '#EF3B24' # Fallback
 
-    # 3. Fetch Shot & Foul Data
-    query_shots = f"SELECT loc_x, loc_y, CAST(is_foul_drawn AS INT64) as foul_val FROM `{PROJECT_ID}.{DATASET_ID}.fct_shots` WHERE player_id = '{player_id}' AND season_id IN {seasons_tuple}"
-    df_shots = client.query(query_shots).to_dataframe()
+    # Fetch geospatial shot and foul data for the target player
+    query_shots = f"SELECT loc_x, loc_y, CAST(is_foul_drawn AS INT64) as foul_val FROM `{PROJECT_ID}.{DATASET_ID}.fct_shots` WHERE player_id = @player_id AND season_id IN UNNEST(@season_ids)"
+    df_shots = client.query(query_shots, job_config=job_config_player).to_dataframe()
 
-    query_fouls = f"SELECT loc_x, loc_y FROM `{PROJECT_ID}.{DATASET_ID}.fct_fouls` WHERE player_id = '{player_id}' AND season_id IN {seasons_tuple}"
-    df_fouls = client.query(query_fouls).to_dataframe()
+    query_fouls = f"SELECT loc_x, loc_y FROM `{PROJECT_ID}.{DATASET_ID}.fct_fouls` WHERE player_id = @player_id AND season_id IN UNNEST(@season_ids)"
+    df_fouls = client.query(query_fouls, job_config=job_config_player).to_dataframe()
     
     if df_shots.empty:
         print(f"No shot data found for {player_name} in {season_title}.")
         return
 
-    # 4. Bin Data
+    # Calculate geospatial density mapping points
     HEX_WIDTH = 25.0
     MAX_R = HEX_WIDTH / np.sqrt(3)
     verts, counts, rates, smoothed, xedges, yedges = get_visual_data(df_shots, df_fouls)
 
-    # 5. Summary Stats
+    # Extract summary statistics for the sidebar panel
     tot_shots = len(df_shots)
     tot_fouls = len(df_fouls)
     sht_foul_pct = (df_shots['foul_val'].sum() / tot_shots) * 100 if tot_shots > 0 else 0
 
-    # 6. Visualization Rendering
+    # Render the matplotlib visualization
     fig = plt.figure(figsize=(16, 12), facecolor=BRAND_DARK)
 
     # Main Court Axis
@@ -164,7 +195,7 @@ def ind_foul_map(player_id: str, year: int):
             ax.add_patch(RegularPolygon(pos, 6, radius=radius, orientation=0, facecolor=color,
                                         edgecolor=BRAND_DARK, linewidth=0.2, alpha=0.9, zorder=2))
 
-    # Layer 2 & 3: Topography & Court
+    # Overlay 2D Topography contours and court lines
     if smoothed is not None:
         X, Y = np.meshgrid(xedges[:-1], yedges[:-1])
         lvls = np.percentile(smoothed[smoothed > 0], [50, 75, 90, 98])
@@ -173,7 +204,7 @@ def ind_foul_map(player_id: str, year: int):
     draw_court_accurate(ax, color=primary, lw=2, paint_fill_color=primary)
     ax.set_xlim(-260, 260); ax.set_ylim(-65, 480); ax.axis('off')
 
-    # 7. Sidebar
+    # Draw Sidebar & Statistics
     fig.text(0.68, 0.93, "SUMMARY STATS", color=BRAND_WHITE, fontsize=12, weight='bold')
     fig.text(0.68, 0.90, f"Total Shots: {tot_shots:,}", color=BRAND_WHITE, fontsize=11)
     fig.text(0.68, 0.87, f"Total Fouls Drawn: {tot_fouls:,}", color=BRAND_WHITE, fontsize=11)
